@@ -39,10 +39,29 @@ def pdf_conversion_worker():
             
             try:
                 # Tenta converter usando LibreOffice
-                if platform.system() == 'Windows':
-                    soffice = r'C:\Program Files\LibreOffice\program\soffice.exe'
-                    if os.path.exists(soffice):
-                        # Usa um timeout menor para o processo
+                if platform.system() == 'Linux':
+                    # Verifica os possíveis caminhos do LibreOffice no Ubuntu
+                    soffice_paths = [
+                        '/usr/bin/soffice',
+                        '/usr/bin/libreoffice',
+                        '/usr/lib/libreoffice/program/soffice',
+                    ]
+                    
+                    soffice = None
+                    for path in soffice_paths:
+                        if os.path.exists(path):
+                            soffice = path
+                            break
+                    
+                    if soffice:
+                        # Mata qualquer processo do LibreOffice que possa estar rodando
+                        try:
+                            subprocess.run(['pkill', 'soffice'], stderr=subprocess.DEVNULL)
+                            time.sleep(1)  # Espera um segundo para garantir que o processo foi finalizado
+                        except:
+                            pass
+                        
+                        # Converte para PDF
                         process = subprocess.run([
                             soffice,
                             '--headless',
@@ -64,10 +83,15 @@ def pdf_conversion_worker():
                         else:
                             raise Exception("PDF não foi gerado")
                     else:
-                        raise Exception("LibreOffice não encontrado")
+                        raise Exception("LibreOffice não encontrado. Instale com: sudo apt-get install libreoffice")
                 else:
                     raise Exception("Sistema operacional não suportado")
                     
+            except subprocess.TimeoutExpired:
+                app.config['CONVERSION_STATUS'][conversion_id] = {
+                    'status': 'error',
+                    'message': 'Tempo limite excedido na conversão do PDF'
+                }
             except Exception as e:
                 app.config['CONVERSION_STATUS'][conversion_id] = {
                     'status': 'error',
