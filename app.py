@@ -156,10 +156,54 @@ def index():
     if os.path.exists(app.config['UPLOAD_FOLDER']):
         for filename in os.listdir(app.config['UPLOAD_FOLDER']):
             if filename.endswith('.xlsx'):
+                model_info = app.config['MODEL_INFO'].get(filename, {})
+                
+                # Cria um exemplo de payload baseado nas informações do modelo
+                example_payload = {}
+                
+                # Adiciona exemplos para variáveis simples
+                for var in model_info.get('variables', []):
+                    if var['type'] == 'text':
+                        example_payload[var['name']] = f"Exemplo {var['name']}"
+                    elif var['type'] == 'int':
+                        example_payload[var['name']] = 123
+                    elif var['type'] == 'double':
+                        example_payload[var['name']] = 123.45
+                    elif var['type'] == 'date':
+                        example_payload[var['name']] = "11-03-2024"
+                
+                # Organiza campos por tabela
+                tables = {}
+                for table in model_info.get('tables', []):
+                    table_name = table['name']
+                    if table_name not in tables:
+                        tables[table_name] = []
+                    tables[table_name].append(table)
+                
+                # Adiciona exemplos para tabelas
+                for table_name, fields in tables.items():
+                    example_row = {}
+                    for field in fields:
+                        if field['type'] == 'text':
+                            example_row[field['field']] = f"Exemplo {field['field']}"
+                        elif field['type'] == 'int':
+                            example_row[field['field']] = 123
+                        elif field['type'] == 'double':
+                            example_row[field['field']] = 123.45
+                        elif field['type'] == 'date':
+                            example_row[field['field']] = "11-03-2024"
+                    
+                    # Adiciona dois exemplos de linha para cada tabela
+                    example_payload[table_name] = [
+                        example_row,
+                        {k: v for k, v in example_row.items()}  # Uma cópia do primeiro exemplo
+                    ]
+                
                 file_info = {
                     'name': filename,
                     'endpoint': url_for('generate_from_model', model_name=filename[:-5], _external=True),
-                    'schema': app.config['MODEL_INFO'].get(filename, {})
+                    'schema': model_info,  # Mantém o schema original
+                    'example_payload': example_payload  # Adiciona o exemplo de payload
                 }
                 files.append(file_info)
     return render_template('index.html', files=files)

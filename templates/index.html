@@ -181,16 +181,22 @@
                             </div>
                             
                             <div class="schema-section">
-                                <h4>Exemplo de Payload:</h4>
+                                <h4>Estrutura do Modelo:</h4>
                                 <pre><code id="schema_{{ loop.index }}">{{ file.schema | tojson(indent=2) }}</code></pre>
-                                <button class="copy-btn" onclick="copySchema({{ loop.index }})">Copiar Exemplo</button>
+                                <button class="copy-btn" onclick="copySchema({{ loop.index }})">Copiar Schema</button>
+                            </div>
+
+                            <div class="schema-section">
+                                <h4>Exemplo de Payload:</h4>
+                                <pre><code id="payload_{{ loop.index }}">{{ file.example_payload | tojson(indent=2) }}</code></pre>
+                                <button class="copy-btn" onclick="copyPayload({{ loop.index }})">Copiar Exemplo</button>
                             </div>
 
                             <div class="example-section">
                                 <h4>Exemplo de Uso (cURL):</h4>
                                 <pre class="curl-example"><code id="curl_{{ loop.index }}">curl -X POST \
     -H "Content-Type: application/json" \
-    -d '{{ file.schema | tojson }}' \
+    -d '{{ file.example_payload | tojson }}' \
     {{ file.endpoint }}</code></pre>
                                 <button class="copy-btn" onclick="copyCurl({{ loop.index }})">Copiar comando cURL</button>
                             </div>
@@ -207,6 +213,11 @@
         function copySchema(index) {
             const schema = document.getElementById(`schema_${index}`).textContent;
             copyToClipboard(schema);
+        }
+
+        function copyPayload(index) {
+            const payload = document.getElementById(`payload_${index}`).textContent;
+            copyToClipboard(payload);
         }
 
         function copyCurl(index) {
