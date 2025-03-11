@@ -18,7 +18,20 @@ app.config['DOWNLOAD_FOLDER'] = 'downloads'  # Pasta para PDFs gerados
 app.config['TEMP_FOLDER'] = 'temp'  # Pasta para arquivos XLSX processados
 app.config['MODEL_INFO'] = {}  # Armazena informações dos modelos
 
-# ... rest of the code ...
+@app.route('/')
+def index():
+    # Lista todos os arquivos XLSX na pasta de uploads
+    files = []
+    if os.path.exists(app.config['UPLOAD_FOLDER']):
+        for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+            if filename.endswith('.xlsx'):
+                file_info = {
+                    'name': filename,
+                    'endpoint': url_for('generate_from_model', model_name=filename[:-5], _external=True),
+                    'schema': app.config['MODEL_INFO'].get(filename, {})
+                }
+                files.append(file_info)
+    return render_template('index.html', files=files)
 
 # Criar cometario de verssão do codigo verssao 1.1  
 
