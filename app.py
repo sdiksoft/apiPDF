@@ -33,8 +33,68 @@ def index():
                 files.append(file_info)
     return render_template('index.html', files=files)
 
-# Criar cometario de verssão do codigo verssao 1.1  
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return 'Nenhum arquivo enviado', 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return 'Nenhum arquivo selecionado', 400
+    
+    if not file.filename.endswith('.xlsx'):
+        return 'Apenas arquivos XLSX são permitidos', 400
 
+    try:
+        # Garante que a pasta uploads existe
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        
+        # Salva o arquivo
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        file.save(filepath)
+        
+        # Analisa o arquivo XLSX para extrair informações
+        wb = load_workbook(filepath)
+        sheet = wb.active
+        
+        # Inicializa as informações do modelo
+        model_info = {
+            'variables': [],
+            'tables': []
+        }
+        
+        # Procura por células com marcadores especiais
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.value and isinstance(cell.value, str):
+                    # Procura por variáveis (formato: ${nome:tipo})
+                    var_matches = re.finditer(r'\${([^:]+):([^}]+)}', cell.value)
+                    for match in var_matches:
+                        name, type_info = match.groups()
+                        model_info['variables'].append({
+                            'name': name,
+                            'type': type_info,
+                            'cell': cell.coordinate
+                        })
+                    
+                    # Procura por tabelas (formato: #{tabela.campo:tipo})
+                    table_matches = re.finditer(r'#{([^.]+)\.([^:]+):([^}]+)}', cell.value)
+                    for match in table_matches:
+                        table_name, field, type_info = match.groups()
+                        model_info['tables'].append({
+                            'name': table_name,
+                            'field': field,
+                            'type': type_info,
+                            'start_cell': cell.coordinate
+                        })
+        
+        # Armazena as informações do modelo
+        app.config['MODEL_INFO'][file.filename] = model_info
+        
+        return 'Arquivo enviado com sucesso', 200
+    
+    except Exception as e:
+        return f'Erro ao processar arquivo: {str(e)}', 500
 
 @app.route('/download/<path:filename>')
 def download_file(filename):
