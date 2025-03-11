@@ -337,11 +337,9 @@ def generate_from_model(model_name):
                 # Converte o valor para o tipo apropriado
                 if var['type'] == 'date':
                     try:
-                        # Tenta primeiro o formato DD-MM-YYYY
                         value = datetime.strptime(value, '%d-%m-%Y')
                     except ValueError:
                         try:
-                            # Se falhar, tenta o formato YYYY-MM-DD
                             value = datetime.strptime(value, '%Y-%m-%d')
                         except ValueError:
                             return jsonify({'error': f'Formato de data inválido para {var["name"]}. Use DD-MM-YYYY'}), 400
@@ -352,81 +350,29 @@ def generate_from_model(model_name):
                 
                 cell.value = value
         
-        # Processa tabelas
-        table_positions = {}  # Armazena a última linha usada para cada tabela
-        
-        # Primeiro, organiza os campos por tabela e encontra a linha inicial de cada tabela
+        # Organiza os campos por tabela
         tables = {}
-        table_start_rows = {}  # Armazena a linha inicial de cada tabela
-        table_columns = {}  # Armazena as colunas de cada tabela
-        max_row = sheet.max_row  # Guarda o número máximo de linhas atual
+        table_start_rows = {}
+        table_columns = {}
         
-        # Função para calcular soma ou média de uma coluna
-        def calculate_column_value(sheet, start_row, end_row, column, operation):
-            values = []
-            for row in range(start_row, end_row + 1):
-                cell = sheet[f'{column}{row}']
-                if cell.value is not None:
-                    try:
-                        value = float(cell.value)
-                        values.append(value)
-                    except (ValueError, TypeError):
-                        pass
+        for table_info in model_info.get('tables', []):
+            table_name = table_info['name']
+            if table_name not in tables:
+                tables[table_name] = []
+                # Pega a linha do primeiro campo da tabela
+                start_row = int(''.join(filter(str.isdigit, table_info['start_cell'])))
+                table_start_rows[table_name] = start_row
+                table_columns[table_name] = {}
             
-            if not values:
-                return 0
+            # Armazena a coluna para uso posterior nos cálculos
+            col = ''.join(filter(str.isalpha, table_info['start_cell']))
+            table_columns[table_name][table_info['field']] = col
             
-            if operation == 'soma':
-                return sum(values)
-            elif operation == 'media':
-                return sum(values) / len(values)
-            return 0
-
-        # Procura por células com marcadores especiais e cálculos
-        for row in sheet.iter_rows():
-            for cell in row:
-                if cell.value and isinstance(cell.value, str):
-                    # Procura por variáveis (formato: ${nome:tipo})
-                    var_matches = re.finditer(r'\${([^:]+):([^}]+)}', cell.value)
-                    for match in var_matches:
-                        name, type_info = match.groups()
-                        model_info['variables'].append({
-                            'name': name,
-                            'type': type_info,
-                            'cell': cell.coordinate
-                        })
-                    
-                    # Procura por tabelas (formato: #{tabela.campo:tipo})
-                    table_matches = re.finditer(r'#{([^.]+)\.([^:]+):([^}]+)}', cell.value)
-                    for match in table_matches:
-                        table_name, field, type_info = match.groups()
-                        if table_name not in table_columns:
-                            table_columns[table_name] = {}
-                        
-                        # Armazena a coluna para uso posterior nos cálculos
-                        col = ''.join(filter(str.isalpha, cell.coordinate))
-                        table_columns[table_name][field] = col
-                        
-                        model_info['tables'].append({
-                            'name': table_name,
-                            'field': field,
-                            'type': type_info,
-                            'start_cell': cell.coordinate
-                        })
-                    
-                    # Procura por cálculos (formato: %{operacao})
-                    calc_matches = re.finditer(r'%{(soma|media)}', cell.value)
-                    for match in calc_matches:
-                        operation = match.group(1)
-                        # Armazena a célula de cálculo para processamento posterior
-                        if 'calculations' not in model_info:
-                            model_info['calculations'] = []
-                        model_info['calculations'].append({
-                            'operation': operation,
-                            'cell': cell.coordinate
-                        })
+            tables[table_name].append(table_info)
         
         # Processa cada tabela
+        table_positions = {}  # Armazena a última linha usada para cada tabela
+        
         for table_name, table_fields in tables.items():
             if table_name in data:
                 table_data = data[table_name]
@@ -442,7 +388,6 @@ def generate_from_model(model_name):
                     
                     if lines_to_add > 0:
                         sheet.insert_rows(start_row + 1, lines_to_add)
-                        max_row = sheet.max_row
                     
                     # Para cada item na lista de dados
                     for idx, item in enumerate(table_data):
@@ -473,30 +418,44 @@ def generate_from_model(model_name):
                                 
                                 # Atribui o valor à célula
                                 sheet[cell] = value
+                    
+                    # Atualiza table_positions para a próxima tabela
+                    table_positions[table_name] = start_row + rows_to_insert - 1
+        
+        # Processa os cálculos após inserir todos os dados de todas as tabelas
+        if 'calculations' in model_info:
+            for calc in model_info['calculations']:
+                cell = sheet[calc['cell']]
+                calc_column = ''.join(filter(str.isalpha, calc['cell']))
+                
+                # Procura a tabela correspondente à coluna
+                for table_name, cols in table_columns.items():
+                    if any(col == calc_column for col in cols.values()):
+                        # Calcula o valor baseado na operação
+                        values = []
+                        start_row = table_start_rows[table_name]
+                        end_row = table_positions[table_name]
                         
-                        # Atualiza table_positions para a próxima tabela
-                        table_positions[table_name] = start_row + rows_to_insert - 1
-
-                        # Processa os cálculos após inserir todos os dados
-                        if 'calculations' in model_info:
-                            for calc in model_info['calculations']:
-                                cell = sheet[calc['cell']]
-                                # Encontra a coluna do cálculo
-                                calc_column = ''.join(filter(str.isalpha, calc['cell']))
-                                # Procura a tabela correspondente
-                                for t_name, cols in table_columns.items():
-                                    if any(col == calc_column for col in cols.values()):
-                                        # Calcula o valor baseado na operação
-                                        result = calculate_column_value(
-                                            sheet,
-                                            table_start_rows[t_name],
-                                            table_positions[t_name],
-                                            calc_column,
-                                            calc['operation']
-                                        )
-                                        # Formata o resultado com 2 casas decimais
-                                        cell.value = round(result, 2)
-                                        break
+                        for row in range(start_row, end_row + 1):
+                            value_cell = sheet[f'{calc_column}{row}']
+                            if value_cell.value is not None:
+                                try:
+                                    value = float(value_cell.value)
+                                    values.append(value)
+                                except (ValueError, TypeError):
+                                    pass
+                        
+                        if values:
+                            if calc['operation'] == 'soma':
+                                result = sum(values)
+                            elif calc['operation'] == 'media':
+                                result = sum(values) / len(values)
+                            else:
+                                result = 0
+                            
+                            # Formata o resultado com 2 casas decimais
+                            cell.value = round(result, 2)
+                        break
         
         # Gera nomes únicos para os arquivos
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -510,8 +469,6 @@ def generate_from_model(model_name):
         # Salva o arquivo Excel temporário e força a sincronização
         excel_path = os.path.join(app.config['TEMP_FOLDER'], excel_filename)
         wb.save(excel_path)
-        
-        # Força o fechamento do workbook para liberar o arquivo
         wb.close()
         
         # Força a sincronização do sistema de arquivos
@@ -524,7 +481,7 @@ def generate_from_model(model_name):
         # Garante que o arquivo existe e está completo
         if not os.path.exists(excel_path) or os.path.getsize(excel_path) == 0:
             raise Exception("Erro ao salvar arquivo Excel")
-            
+        
         # Espera um momento para garantir que o arquivo foi salvo completamente
         time.sleep(1)
         
@@ -538,7 +495,7 @@ def generate_from_model(model_name):
             'conversion_id': pdf_filename,
             'status_url': f'/conversion-status/{pdf_filename}'
         })
-            
+    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
