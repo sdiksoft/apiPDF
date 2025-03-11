@@ -38,6 +38,18 @@ def pdf_conversion_worker():
             }
             
             try:
+                # Verifica se o arquivo Excel existe e está pronto
+                max_attempts = 5
+                attempt = 0
+                while attempt < max_attempts:
+                    if os.path.exists(excel_path) and os.path.getsize(excel_path) > 0:
+                        break
+                    time.sleep(1)
+                    attempt += 1
+                
+                if attempt >= max_attempts:
+                    raise Exception("Arquivo Excel não está pronto para conversão")
+                
                 # Tenta converter usando LibreOffice
                 if platform.system() == 'Linux':
                     # Verifica os possíveis caminhos do LibreOffice no Ubuntu
@@ -61,19 +73,27 @@ def pdf_conversion_worker():
                         except:
                             pass
                         
-                        # Converte para PDF
+                        # Garante que o diretório de destino existe
+                        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+                        
+                        # Converte para PDF com tempo de espera maior
                         process = subprocess.run([
                             soffice,
                             '--headless',
-                            '--convert-to', 'pdf',
+                            '--convert-to', 'pdf:writer_pdf_Export',  # Usa o exportador PDF específico
                             '--outdir', os.path.dirname(pdf_path),
                             excel_path
-                        ], check=True, timeout=30)  # 30 segundos de timeout
+                        ], check=True, timeout=60)  # Aumenta o timeout para 60 segundos
+                        
+                        # Espera um momento para o arquivo ser gerado
+                        time.sleep(2)
                         
                         # Renomeia o arquivo
                         temp_pdf = os.path.join(os.path.dirname(pdf_path), 
                                               os.path.splitext(os.path.basename(excel_path))[0] + '.pdf')
-                        if os.path.exists(temp_pdf):
+                        
+                        # Verifica se o PDF foi gerado e tem conteúdo
+                        if os.path.exists(temp_pdf) and os.path.getsize(temp_pdf) > 0:
                             shutil.move(temp_pdf, pdf_path)
                             app.config['CONVERSION_STATUS'][conversion_id] = {
                                 'status': 'completed',
@@ -81,7 +101,7 @@ def pdf_conversion_worker():
                                 'pdf_url': f'/download/{os.path.basename(pdf_path)}'
                             }
                         else:
-                            raise Exception("PDF não foi gerado")
+                            raise Exception("PDF não foi gerado corretamente")
                     else:
                         raise Exception("LibreOffice não encontrado. Instale com: sudo apt-get install libreoffice")
                 else:
@@ -334,9 +354,26 @@ def generate_from_model(model_name):
         os.makedirs(app.config['TEMP_FOLDER'], exist_ok=True)
         os.makedirs(app.config['DOWNLOAD_FOLDER'], exist_ok=True)
         
-        # Salva o arquivo Excel temporário
+        # Salva o arquivo Excel temporário e força a sincronização
         excel_path = os.path.join(app.config['TEMP_FOLDER'], excel_filename)
         wb.save(excel_path)
+        
+        # Força o fechamento do workbook para liberar o arquivo
+        wb.close()
+        
+        # Força a sincronização do sistema de arquivos
+        if platform.system() == 'Linux':
+            try:
+                subprocess.run(['sync'], check=True)
+            except:
+                pass
+        
+        # Garante que o arquivo existe e está completo
+        if not os.path.exists(excel_path) or os.path.getsize(excel_path) == 0:
+            raise Exception("Erro ao salvar arquivo Excel")
+            
+        # Espera um momento para garantir que o arquivo foi salvo completamente
+        time.sleep(1)
         
         # Inicia a conversão para PDF em background
         pdf_path = os.path.join(app.config['DOWNLOAD_FOLDER'], pdf_filename)
