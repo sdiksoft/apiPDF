@@ -350,21 +350,37 @@ def generate_from_model(model_name):
                 
                 cell.value = value
         
-        # Organiza os campos por tabela
+        # Organiza os campos por tabela e encontra células de cálculo
         tables = {}
         table_start_rows = {}
         table_columns = {}
+        calculation_cells = {}  # Armazena as células que contêm cálculos
         
+        # Primeiro, vamos encontrar todas as células de cálculo e suas informações
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.value and isinstance(cell.value, str):
+                    calc_matches = re.finditer(r'%{(soma|media)}', cell.value)
+                    for match in calc_matches:
+                        operation = match.group(1)
+                        col = ''.join(filter(str.isalpha, cell.coordinate))
+                        row_num = int(''.join(filter(str.isdigit, cell.coordinate)))
+                        calculation_cells[cell.coordinate] = {
+                            'operation': operation,
+                            'column': col,
+                            'row': row_num,
+                            'original_text': cell.value
+                        }
+        
+        # Organiza as informações das tabelas
         for table_info in model_info.get('tables', []):
             table_name = table_info['name']
             if table_name not in tables:
                 tables[table_name] = []
-                # Pega a linha do primeiro campo da tabela
                 start_row = int(''.join(filter(str.isdigit, table_info['start_cell'])))
                 table_start_rows[table_name] = start_row
                 table_columns[table_name] = {}
             
-            # Armazena a coluna para uso posterior nos cálculos
             col = ''.join(filter(str.isalpha, table_info['start_cell']))
             table_columns[table_name][table_info['field']] = col
             
@@ -422,40 +438,39 @@ def generate_from_model(model_name):
                     # Atualiza table_positions para a próxima tabela
                     table_positions[table_name] = start_row + rows_to_insert - 1
         
-        # Processa os cálculos após inserir todos os dados de todas as tabelas
-        if 'calculations' in model_info:
-            for calc in model_info['calculations']:
-                cell = sheet[calc['cell']]
-                calc_column = ''.join(filter(str.isalpha, calc['cell']))
+        # Processa os cálculos após inserir todos os dados
+        for cell_coord, calc_info in calculation_cells.items():
+            # Encontra a tabela correspondente à coluna do cálculo
+            target_table = None
+            for table_name, cols in table_columns.items():
+                if any(col == calc_info['column'] for col in cols.values()):
+                    target_table = table_name
+                    break
+            
+            if target_table:
+                # Coleta os valores da coluna
+                values = []
+                start_row = table_start_rows[target_table]
+                end_row = table_positions.get(target_table, start_row)
                 
-                # Procura a tabela correspondente à coluna
-                for table_name, cols in table_columns.items():
-                    if any(col == calc_column for col in cols.values()):
-                        # Calcula o valor baseado na operação
-                        values = []
-                        start_row = table_start_rows[table_name]
-                        end_row = table_positions[table_name]
-                        
-                        for row in range(start_row, end_row + 1):
-                            value_cell = sheet[f'{calc_column}{row}']
-                            if value_cell.value is not None:
-                                try:
-                                    value = float(value_cell.value)
-                                    values.append(value)
-                                except (ValueError, TypeError):
-                                    pass
-                        
-                        if values:
-                            if calc['operation'] == 'soma':
-                                result = sum(values)
-                            elif calc['operation'] == 'media':
-                                result = sum(values) / len(values)
-                            else:
-                                result = 0
-                            
-                            # Formata o resultado com 2 casas decimais
-                            cell.value = round(result, 2)
-                        break
+                for row in range(start_row, end_row + 1):
+                    value_cell = sheet[f"{calc_info['column']}{row}"]
+                    if value_cell.value is not None:
+                        try:
+                            value = float(value_cell.value)
+                            values.append(value)
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Calcula o resultado
+                if values:
+                    if calc_info['operation'] == 'soma':
+                        result = sum(values)
+                    elif calc_info['operation'] == 'media':
+                        result = sum(values) / len(values)
+                    
+                    # Substitui o marcador pelo valor calculado
+                    sheet[cell_coord] = round(result, 2)
         
         # Gera nomes únicos para os arquivos
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
