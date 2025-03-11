@@ -1,0 +1,6 @@
+flask==2.0.1
+werkzeug==2.0.1
+openpyxl==3.1.2
+pandas==1.5.3
+python-pptx==0.6.21
+WeasyPrint==60.1 

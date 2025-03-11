@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f8f8f8;
+        }
+        .error-container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+            margin: 0 auto;
+            max-width: 600px;
+        }
+        .error-icon {
+            color: #dc3545;
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        .error-title {
+            color: #dc3545;
+            font-size: 24px;
+            margin-bottom: 15px;
+        }
+        .error-message {
+            color: #666;
+            font-size: 16px;
+            line-height: 1.5;
+            margin-bottom: 20px;
+        }
+        .error-details {
+            color: #dc3545;
+            font-size: 14px;
+            background-color: #fff3f3;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            text-align: left;
+            word-wrap: break-word;
+        }
+        .timestamp {
+            color: #999;
+            font-size: 14px;
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-icon">⚠️</div>
+        <h1 class="error-title">Erro ao Gerar PDF</h1>
+        <p class="error-message">
+            Não foi possível gerar o arquivo PDF a partir do modelo Excel.<br>
+            Por favor, verifique se o arquivo modelo está correto e tente novamente.
+        </p>
+        {% if error_message %}
+        <div class="error-details">
+            <strong>Detalhes do erro:</strong><br>
+            {{ error_message }}
+        </div>
+        {% endif %}
+        <p class="timestamp">
+            Gerado em: {{ timestamp }}
+        </p>
+    </div>
+</body>
+</html> 

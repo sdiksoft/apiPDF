@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciador de Modelos XLSX</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .file-list {
+            margin-top: 20px;
+        }
+        .file-item {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .file-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .download-btn {
+            background-color: #007bff;
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            text-decoration: none;
+        }
+        .download-btn:hover {
+            background-color: #0056b3;
+        }
+        .endpoint-info {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .schema-section {
+            margin-top: 15px;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        #uploadForm {
+            margin-bottom: 20px;
+        }
+        #response {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .copy-btn {
+            background-color: #6c757d;
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        .copy-btn:hover {
+            background-color: #5a6268;
+        }
+        .example-section {
+            margin-top: 15px;
+            border-top: 1px solid #dee2e6;
+            padding-top: 15px;
+        }
+        .example-section h4 {
+            margin-bottom: 10px;
+        }
+        .curl-example {
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gerenciador de Modelos XLSX</h1>
+        
+        <div class="upload-section">
+            <form id="uploadForm" enctype="multipart/form-data">
+                <input type="file" name="file" accept=".xlsx" required>
+                <button type="submit">Enviar Arquivo</button>
+            </form>
+            <div id="response"></div>
+        </div>
+
+        <div class="file-list">
+            <h2>Modelos Disponíveis</h2>
+            {% if files %}
+                {% for file in files %}
+                    <div class="file-item">
+                        <div class="file-header">
+                            <h3>{{ file.name }}</h3>
+                            <a href="{{ url_for('download_file', filename=file.name) }}" class="download-btn">Download Modelo</a>
+                        </div>
+                        
+                        <div class="endpoint-info">
+                            <h4>Endpoint da API:</h4>
+                            <div style="display: flex; align-items: center;">
+                                <code>POST {{ file.endpoint }}</code>
+                                <button class="copy-btn" onclick="copyToClipboard('{{ file.endpoint }}')">Copiar</button>
+                            </div>
+                            
+                            <div class="schema-section">
+                                <h4>Exemplo de Payload:</h4>
+                                <pre><code id="schema_{{ loop.index }}">{{ file.schema | tojson(indent=2) }}</code></pre>
+                                <button class="copy-btn" onclick="copySchema({{ loop.index }})">Copiar Exemplo</button>
+                            </div>
+
+                            <div class="example-section">
+                                <h4>Exemplo de Uso (cURL):</h4>
+                                <pre class="curl-example"><code id="curl_{{ loop.index }}">curl -X POST \
+    -H "Content-Type: application/json" \
+    -d '{{ file.schema | tojson }}' \
+    {{ file.endpoint }}</code></pre>
+                                <button class="copy-btn" onclick="copyCurl({{ loop.index }})">Copiar comando cURL</button>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p>Nenhum arquivo XLSX encontrado.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function copySchema(index) {
+            const schema = document.getElementById(`schema_${index}`).textContent;
+            copyToClipboard(schema);
+        }
+
+        function copyCurl(index) {
+            const curl = document.getElementById(`curl_${index}`).textContent;
+            copyToClipboard(curl);
+        }
+
+        function copyToClipboard(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                alert('Copiado para a área de transferência!');
+            } catch (err) {
+                console.error('Erro ao copiar:', err);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.text();
+                const responseDiv = document.getElementById('response');
+                
+                if (response.ok) {
+                    responseDiv.className = 'success';
+                    responseDiv.textContent = result;
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    responseDiv.className = 'error';
+                    responseDiv.textContent = result;
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                document.getElementById('response').className = 'error';
+                document.getElementById('response').textContent = 'Erro ao enviar arquivo';
+            }
+        });
+    </script>
+</body>
+</html> 
