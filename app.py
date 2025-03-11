@@ -44,6 +44,19 @@ def download_file(filename):
             return send_from_directory(folder, filename)
     return "Arquivo não encontrado", 404
 
+@app.route('/delete/<filename>', methods=['POST'])
+def delete_model(filename):
+    try:
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            if filename in app.config['MODEL_INFO']:
+                del app.config['MODEL_INFO'][filename]
+            return jsonify({'message': 'Modelo excluído com sucesso'}), 200
+        return jsonify({'error': 'Arquivo não encontrado'}), 404
+    except Exception as e:
+        return jsonify({'error': f'Erro ao excluir arquivo: {str(e)}'}), 500
+
 @app.route('/api/generate/<model_name>', methods=['POST'])
 def generate_from_model(model_name):
     filename = f'{model_name}.xlsx'
