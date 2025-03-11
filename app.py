@@ -263,8 +263,8 @@ def upload_file():
                             'start_cell': cell.coordinate
                         })
                     
-                    # Procura por cálculos (formato: ##{operacao})
-                    calc_matches = re.finditer(r'##\{(soma|media)\}', cell.value)
+                    # Procura por cálculos (formato: %{operacao})
+                    calc_matches = re.finditer(r'%{(soma|media)}', cell.value)
                     for match in calc_matches:
                         operation = match.group(1)
                         # Armazena a célula de cálculo para processamento posterior
@@ -414,8 +414,8 @@ def generate_from_model(model_name):
                             'start_cell': cell.coordinate
                         })
                     
-                    # Procura por cálculos (formato: ##{operacao})
-                    calc_matches = re.finditer(r'##\{(soma|media)\}', cell.value)
+                    # Procura por cálculos (formato: %{operacao})
+                    calc_matches = re.finditer(r'%{(soma|media)}', cell.value)
                     for match in calc_matches:
                         operation = match.group(1)
                         # Armazena a célula de cálculo para processamento posterior
