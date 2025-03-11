@@ -340,12 +340,18 @@ def generate_from_model(model_name):
         # Processa tabelas
         table_positions = {}  # Armazena a última linha usada para cada tabela
         
-        # Primeiro, organiza os campos por tabela
+        # Primeiro, organiza os campos por tabela e encontra a linha inicial de cada tabela
         tables = {}
+        table_start_rows = {}  # Armazena a linha inicial de cada tabela
+        max_row = sheet.max_row  # Guarda o número máximo de linhas atual
+        
         for table_info in model_info['tables']:
             table_name = table_info['name']
             if table_name not in tables:
                 tables[table_name] = []
+                # Pega a linha do primeiro campo da tabela
+                start_row = int(''.join(filter(str.isdigit, table_info['start_cell'])))
+                table_start_rows[table_name] = start_row
             tables[table_name].append(table_info)
         
         # Processa cada tabela
@@ -355,39 +361,53 @@ def generate_from_model(model_name):
                 if not isinstance(table_data, list):
                     return jsonify({'error': f'Dados da tabela {table_name} devem ser uma lista'}), 400
                 
-                # Encontra a linha inicial da tabela
-                start_row = min(int(''.join(filter(str.isdigit, field['start_cell']))) for field in table_fields)
-                current_row = start_row + 1  # Começa na linha após os cabeçalhos
+                start_row = table_start_rows[table_name]
+                rows_to_insert = len(table_data)
                 
-                # Para cada item na lista de dados
-                for item in table_data:
-                    # Para cada campo da tabela
-                    for field in table_fields:
-                        # Obtém a coluna da célula original
-                        col = ''.join(filter(str.isalpha, field['start_cell']))
-                        cell = f'{col}{current_row}'
-                        
-                        # Obtém o valor do campo
-                        value = item.get(field['field'])
-                        if value is not None:
-                            # Converte o valor para o tipo apropriado
-                            if field['type'] == 'date':
-                                try:
-                                    value = datetime.strptime(value, '%d-%m-%Y')
-                                except ValueError:
-                                    try:
-                                        value = datetime.strptime(value, '%Y-%m-%d')
-                                    except ValueError:
-                                        return jsonify({'error': f'Formato de data inválido para {field["field"]} em {table_name}'}), 400
-                            elif field['type'] == 'int':
-                                value = int(value)
-                            elif field['type'] == 'double':
-                                value = float(value)
-                            
-                            # Atribui o valor à célula
-                            sheet[cell] = value
+                if rows_to_insert > 0:
+                    # Calcula quantas linhas precisamos inserir
+                    # Subtrai 1 porque já temos a linha do cabeçalho
+                    lines_to_add = rows_to_insert - 1
                     
-                    current_row += 1  # Move para a próxima linha
+                    if lines_to_add > 0:
+                        # Insere novas linhas após a linha inicial
+                        sheet.insert_rows(start_row + 1, lines_to_add)
+                        
+                        # Atualiza o número máximo de linhas
+                        max_row = sheet.max_row
+                    
+                    # Para cada item na lista de dados
+                    for idx, item in enumerate(table_data):
+                        current_row = start_row + idx
+                        
+                        # Para cada campo da tabela
+                        for field in table_fields:
+                            # Obtém a coluna da célula original
+                            col = ''.join(filter(str.isalpha, field['start_cell']))
+                            cell = f'{col}{current_row}'
+                            
+                            # Obtém o valor do campo
+                            value = item.get(field['field'])
+                            if value is not None:
+                                # Converte o valor para o tipo apropriado
+                                if field['type'] == 'date':
+                                    try:
+                                        value = datetime.strptime(value, '%d-%m-%Y')
+                                    except ValueError:
+                                        try:
+                                            value = datetime.strptime(value, '%Y-%m-%d')
+                                        except ValueError:
+                                            return jsonify({'error': f'Formato de data inválido para {field["field"]} em {table_name}'}), 400
+                                elif field['type'] == 'int':
+                                    value = int(value)
+                                elif field['type'] == 'double':
+                                    value = float(value)
+                                
+                                # Atribui o valor à célula
+                                sheet[cell] = value
+                        
+                        # Atualiza table_positions para a próxima tabela
+                        table_positions[table_name] = start_row + rows_to_insert - 1
         
         # Gera nomes únicos para os arquivos
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
