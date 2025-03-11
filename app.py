@@ -11,12 +11,99 @@ import platform
 from weasyprint import HTML
 from jinja2 import Template
 import shutil
+import threading
+from queue import Queue
+import time
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['DOWNLOAD_FOLDER'] = 'downloads'  # Pasta para PDFs gerados
 app.config['TEMP_FOLDER'] = 'temp'  # Pasta para arquivos XLSX processados
 app.config['MODEL_INFO'] = {}  # Armazena informações dos modelos
+app.config['CONVERSION_QUEUE'] = Queue()  # Fila para conversão de PDFs
+app.config['CONVERSION_STATUS'] = {}  # Status das conversões
+
+# Inicia o worker de conversão em background
+def pdf_conversion_worker():
+    while True:
+        try:
+            # Obtém o próximo item da fila
+            excel_path, pdf_path = app.config['CONVERSION_QUEUE'].get()
+            
+            # Atualiza o status
+            conversion_id = os.path.basename(pdf_path)
+            app.config['CONVERSION_STATUS'][conversion_id] = {
+                'status': 'processing',
+                'message': 'Convertendo para PDF...'
+            }
+            
+            try:
+                # Tenta converter usando LibreOffice
+                if platform.system() == 'Windows':
+                    soffice = r'C:\Program Files\LibreOffice\program\soffice.exe'
+                    if os.path.exists(soffice):
+                        # Usa um timeout menor para o processo
+                        process = subprocess.run([
+                            soffice,
+                            '--headless',
+                            '--convert-to', 'pdf',
+                            '--outdir', os.path.dirname(pdf_path),
+                            excel_path
+                        ], check=True, timeout=30)  # 30 segundos de timeout
+                        
+                        # Renomeia o arquivo
+                        temp_pdf = os.path.join(os.path.dirname(pdf_path), 
+                                              os.path.splitext(os.path.basename(excel_path))[0] + '.pdf')
+                        if os.path.exists(temp_pdf):
+                            shutil.move(temp_pdf, pdf_path)
+                            app.config['CONVERSION_STATUS'][conversion_id] = {
+                                'status': 'completed',
+                                'message': 'Conversão concluída com sucesso',
+                                'pdf_url': f'/download/{os.path.basename(pdf_path)}'
+                            }
+                        else:
+                            raise Exception("PDF não foi gerado")
+                    else:
+                        raise Exception("LibreOffice não encontrado")
+                else:
+                    raise Exception("Sistema operacional não suportado")
+                    
+            except Exception as e:
+                app.config['CONVERSION_STATUS'][conversion_id] = {
+                    'status': 'error',
+                    'message': f'Erro na conversão: {str(e)}'
+                }
+            
+            # Remove arquivos temporários após 1 hora
+            threading.Timer(3600, cleanup_temp_files, args=[excel_path, pdf_path]).start()
+            
+        except Exception as e:
+            print(f"Erro no worker de conversão: {str(e)}")
+        finally:
+            app.config['CONVERSION_QUEUE'].task_done()
+
+def cleanup_temp_files(excel_path, pdf_path):
+    """Remove arquivos temporários após um período"""
+    try:
+        if os.path.exists(excel_path):
+            os.remove(excel_path)
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
+    except Exception as e:
+        print(f"Erro ao limpar arquivos temporários: {str(e)}")
+
+# Inicia o thread do worker
+conversion_thread = threading.Thread(target=pdf_conversion_worker, daemon=True)
+conversion_thread.start()
+
+@app.route('/conversion-status/<conversion_id>')
+def conversion_status(conversion_id):
+    """Retorna o status atual da conversão"""
+    status = app.config['CONVERSION_STATUS'].get(conversion_id, {
+        'status': 'not_found',
+        'message': 'Conversão não encontrada'
+    })
+    return jsonify(status)
 
 @app.route('/')
 def index():
@@ -227,59 +314,19 @@ def generate_from_model(model_name):
         excel_path = os.path.join(app.config['TEMP_FOLDER'], excel_filename)
         wb.save(excel_path)
         
-        # Converte para PDF
+        # Inicia a conversão para PDF em background
         pdf_path = os.path.join(app.config['DOWNLOAD_FOLDER'], pdf_filename)
+        app.config['CONVERSION_QUEUE'].put((excel_path, pdf_path))
         
-        try:
-            # Tenta converter para PDF usando uma função auxiliar
-            convert_excel_to_pdf(excel_path, pdf_path)
+        return jsonify({
+            'message': 'Arquivo gerado com sucesso',
+            'excel_url': f'/download/{excel_filename}',
+            'conversion_id': pdf_filename,
+            'status_url': f'/conversion-status/{pdf_filename}'
+        })
             
-            return jsonify({
-                'message': 'Arquivo gerado com sucesso',
-                'excel_url': f'/download/{excel_filename}',
-                'pdf_url': f'/download/{pdf_filename}'
-            })
-            
-        except Exception as e:
-            # Se falhar a conversão para PDF, ainda retorna o Excel
-            return jsonify({
-                'message': 'Arquivo Excel gerado com sucesso (falha na conversão para PDF)',
-                'error': str(e),
-                'excel_url': f'/download/{excel_filename}'
-            })
-    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-def convert_excel_to_pdf(excel_path, pdf_path):
-    """
-    Converte um arquivo Excel para PDF usando uma ferramenta externa
-    """
-    try:
-        # Primeiro, tenta usar o LibreOffice/OpenOffice
-        if platform.system() == 'Windows':
-            soffice = r'C:\Program Files\LibreOffice\program\soffice.exe'
-            if os.path.exists(soffice):
-                subprocess.run([
-                    soffice,
-                    '--headless',
-                    '--convert-to', 'pdf',
-                    '--outdir', os.path.dirname(pdf_path),
-                    excel_path
-                ], check=True)
-                
-                # Renomeia o arquivo para o nome desejado
-                temp_pdf = os.path.join(os.path.dirname(pdf_path), 
-                                      os.path.splitext(os.path.basename(excel_path))[0] + '.pdf')
-                if os.path.exists(temp_pdf):
-                    shutil.move(temp_pdf, pdf_path)
-                return
-        
-        # Se não conseguir usar o LibreOffice, tenta outras alternativas...
-        raise Exception("Não foi possível converter para PDF. LibreOffice não encontrado.")
-        
-    except Exception as e:
-        raise Exception(f"Erro na conversão para PDF: {str(e)}")
 
 if __name__ == '__main__':
     app.run(debug=True)
