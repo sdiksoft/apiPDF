@@ -26,6 +26,98 @@ app.config['MODEL_INFO'] = {}  # Armazena informações dos modelos
 app.config['CONVERSION_QUEUE'] = Queue()  # Fila para conversão de PDFs
 app.config['CONVERSION_STATUS'] = {}  # Status das conversões
 
+def load_xlsx_models():
+    """Carrega todos os modelos XLSX da pasta uploads ao iniciar a aplicação"""
+    try:
+        if not os.path.exists(app.config['UPLOAD_FOLDER']):
+            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+            print("Pasta de uploads criada")
+            return
+        
+        print("Carregando modelos XLSX...")
+        for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+            if filename.endswith('.xlsx'):
+                try:
+                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                    wb = load_workbook(filepath)
+                    sheet = wb.active
+                    
+                    # Inicializa as informações do modelo
+                    model_info = {
+                        'variables': [],
+                        'tables': []
+                    }
+                    
+                    # Procura por células com marcadores especiais
+                    for row in sheet.iter_rows():
+                        for cell in row:
+                            if cell.value and isinstance(cell.value, str):
+                                # Procura por variáveis (formato: ${nome:tipo})
+                                var_matches = re.finditer(r'\${([^:]+):([^}]+)}', cell.value)
+                                for match in var_matches:
+                                    name, type_info = match.groups()
+                                    model_info['variables'].append({
+                                        'name': name,
+                                        'type': type_info,
+                                        'cell': cell.coordinate
+                                    })
+                                
+                                # Procura por tabelas (formato: #{tabela.campo:tipo})
+                                table_matches = re.finditer(r'#{([^.]+)\.([^:]+):([^}]+)}', cell.value)
+                                for match in table_matches:
+                                    table_name, field, type_info = match.groups()
+                                    model_info['tables'].append({
+                                        'name': table_name,
+                                        'field': field,
+                                        'type': type_info,
+                                        'start_cell': cell.coordinate
+                                    })
+                                
+                                # Procura por cálculos (formato: %{operacao})
+                                calc_matches = re.finditer(r'%{([^}]+)}', cell.value)
+                                for match in calc_matches:
+                                    calc_expression = match.group(1)
+                                    # Divide a expressão em tabela.campo:operação
+                                    parts = calc_expression.split(':')
+                                    if len(parts) != 2:
+                                        continue
+                                    
+                                    field_parts = parts[0].split('.')
+                                    if len(field_parts) != 2:
+                                        continue
+                                    
+                                    table_name = field_parts[0]
+                                    field_name = field_parts[1]
+                                    operation = parts[1]
+                                    
+                                    model_info['calculations'] = model_info.get('calculations', [])
+                                    model_info['calculations'].append({
+                                        'table_name': table_name,
+                                        'field_name': field_name,
+                                        'operation': operation,
+                                        'cell': cell.coordinate
+                                    })
+                    
+                    # Armazena as informações do modelo
+                    app.config['MODEL_INFO'][filename] = model_info
+                    print(f"Modelo carregado: {filename}")
+                    wb.close()
+                
+                except Exception as e:
+                    print(f"Erro ao carregar modelo {filename}: {str(e)}")
+        
+        print("Carregamento de modelos concluído")
+    
+    except Exception as e:
+        print(f"Erro ao carregar modelos: {str(e)}")
+
+# Garante que as pastas necessárias existem
+for folder in [app.config['UPLOAD_FOLDER'], app.config['DOWNLOAD_FOLDER'], app.config['TEMP_FOLDER']]:
+    os.makedirs(folder, exist_ok=True)
+
+# Carrega os modelos XLSX existentes
+load_xlsx_models()
+
 # Inicia o worker de conversão em background
 def pdf_conversion_worker():
     while True:
