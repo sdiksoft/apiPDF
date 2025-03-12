@@ -3,8 +3,6 @@ import os
 import pandas as pd
 import re
 from openpyxl import load_workbook
-from openpyxl.styles import Font, Alignment, Border, Side, PatternFill, Protection
-from openpyxl.utils import get_column_letter
 from datetime import datetime
 import json
 from pathlib import Path
@@ -16,7 +14,6 @@ import shutil
 import threading
 from queue import Queue
 import time
-import copy
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -266,27 +263,14 @@ def upload_file():
                             'start_cell': cell.coordinate
                         })
                     
-                    # Procura por cálculos (formato: %{tabela.campo:operação})
-                    calc_matches = re.finditer(r'%{([^}]+)}', cell.value)
+                    # Procura por cálculos (formato: %{operacao})
+                    calc_matches = re.finditer(r'%{(soma|media)}', cell.value)
                     for match in calc_matches:
-                        calc_expression = match.group(1)
-                        # Divide a expressão em tabela.campo:operação
-                        parts = calc_expression.split(':')
-                        if len(parts) != 2:
-                            continue
-                        
-                        field_parts = parts[0].split('.')
-                        if len(field_parts) != 2:
-                            continue
-                        
-                        table_name = field_parts[0]
-                        field_name = field_parts[1]
-                        operation = parts[1]
-                        
-                        model_info['calculations'] = model_info.get('calculations', [])
+                        operation = match.group(1)
+                        # Armazena a célula de cálculo para processamento posterior
+                        if 'calculations' not in model_info:
+                            model_info['calculations'] = []
                         model_info['calculations'].append({
-                            'table_name': table_name,
-                            'field_name': field_name,
                             'operation': operation,
                             'cell': cell.coordinate
                         })
@@ -376,56 +360,17 @@ def generate_from_model(model_name):
         for row in sheet.iter_rows():
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
-                    # Suporta operações compostas como %[somar([produtos.quantidade.somar], [produtos.valor.media])]
-                    cell_value = str(cell.value)
-                    if '%[' in cell_value and ']' in cell_value:
-                        # Extrai a expressão completa
-                        full_expr = re.search(r'%\[(.*?)\]', cell_value)
-                        if not full_expr:
-                            continue
-                        
-                        calc_expression = full_expr.group(1)
-                        
-                        # Verifica se é uma operação composta
-                        if '([' in calc_expression and '])' in calc_expression:
-                            # Extrai a operação e as expressões
-                            match = re.match(r'(\w+)\(\[(.*?)\],\s*\[(.*?)\]\)', calc_expression)
-                            if match:
-                                operation = match.group(1)
-                                expr1 = match.group(2)
-                                expr2 = match.group(3)
-                                
-                                col = ''.join(filter(str.isalpha, cell.coordinate))
-                                row_num = int(''.join(filter(str.isdigit, cell.coordinate)))
-                                calculation_cells[cell.coordinate] = {
-                                    'type': 'compound',
-                                    'operation': operation,
-                                    'expr1': expr1,
-                                    'expr2': expr2,
-                                    'column': col,
-                                    'row': row_num,
-                                    'original_text': cell.value
-                                }
-                                continue
-                        
-                        # Se não for composta, processa como expressão simples
-                        parts = calc_expression.split('.')
-                        if len(parts) >= 3:
-                            table_name = parts[0]
-                            field_name = parts[1]
-                            operation = parts[2]
-                            
-                            col = ''.join(filter(str.isalpha, cell.coordinate))
-                            row_num = int(''.join(filter(str.isdigit, cell.coordinate)))
-                            calculation_cells[cell.coordinate] = {
-                                'type': 'simple',
-                                'operation': operation,
-                                'table_name': table_name,
-                                'field_name': field_name,
-                                'column': col,
-                                'row': row_num,
-                                'original_text': cell.value
-                            }
+                    calc_matches = re.finditer(r'%{(soma|media)}', cell.value)
+                    for match in calc_matches:
+                        operation = match.group(1)
+                        col = ''.join(filter(str.isalpha, cell.coordinate))
+                        row_num = int(''.join(filter(str.isdigit, cell.coordinate)))
+                        calculation_cells[cell.coordinate] = {
+                            'operation': operation,
+                            'column': col,
+                            'row': row_num,
+                            'original_text': cell.value
+                        }
         
         # Organiza as informações das tabelas
         for table_info in model_info.get('tables', []):
@@ -454,69 +399,26 @@ def generate_from_model(model_name):
                 rows_to_insert = len(table_data)
                 
                 if rows_to_insert > 0:
-                    # Encontra a última linha que contém cálculos para esta tabela
-                    last_calc_row = start_row
-                    for coord, calc_info in calculation_cells.items():
-                        if calc_info['table_name'] == table_name:
-                            row_num = int(''.join(filter(str.isdigit, coord)))
-                            last_calc_row = max(last_calc_row, row_num)
+                    # Calcula quantas linhas precisamos inserir
+                    lines_to_add = rows_to_insert - 1
                     
-                    # Primeiro, salva os cálculos se existirem
-                    calcs_to_move = {}
-                    if last_calc_row > start_row:
-                        for coord, calc_info in calculation_cells.items():
-                            if calc_info['table_name'] == table_name:
-                                row_num = int(''.join(filter(str.isdigit, coord)))
-                                col = ''.join(filter(str.isalpha, coord))
-                                if row_num == last_calc_row:
-                                    calcs_to_move[col] = sheet[coord].value
-                    
-                    # Salva a formatação da linha modelo
-                    template_row = start_row
-                    template_formats = {}
-                    max_col = 1
-                    for cell in sheet[template_row]:
-                        col_letter = cell.column_letter
-                        max_col = max(max_col, cell.column)
-                        template_formats[col_letter] = {
-                            'font': copy.copy(cell.font),
-                            'alignment': copy.copy(cell.alignment),
-                            'border': copy.copy(cell.border),
-                            'fill': copy.copy(cell.fill),
-                            'number_format': cell.number_format,
-                            'protection': copy.copy(cell.protection)
-                        }
-                    
-                    # Insere as linhas necessárias
-                    if rows_to_insert > 1:  # Só insere se precisar de mais de uma linha
-                        sheet.insert_rows(start_row + 1, rows_to_insert - 1)
+                    if lines_to_add > 0:
+                        sheet.insert_rows(start_row + 1, lines_to_add)
                     
                     # Para cada item na lista de dados
                     for idx, item in enumerate(table_data):
                         current_row = start_row + idx
                         
-                        # Aplica a formatação na linha atual (exceto primeira linha que já está formatada)
-                        if idx > 0:
-                            for col in range(1, max_col + 1):
-                                col_letter = get_column_letter(col)
-                                if col_letter in template_formats:
-                                    new_cell = sheet.cell(row=current_row, column=col)
-                                    format_info = template_formats[col_letter]
-                                    new_cell.font = copy.copy(format_info['font'])
-                                    new_cell.alignment = copy.copy(format_info['alignment'])
-                                    new_cell.border = copy.copy(format_info['border'])
-                                    new_cell.fill = copy.copy(format_info['fill'])
-                                    new_cell.number_format = format_info['number_format']
-                                    new_cell.protection = copy.copy(format_info['protection'])
-                        
                         # Para cada campo da tabela
                         for field in table_fields:
+                            # Obtém a coluna da célula original
                             col = ''.join(filter(str.isalpha, field['start_cell']))
                             cell = f'{col}{current_row}'
                             
-                            # Obtém e formata o valor
+                            # Obtém o valor do campo
                             value = item.get(field['field'])
                             if value is not None:
+                                # Converte o valor para o tipo apropriado
                                 if field['type'] == 'date':
                                     try:
                                         value = datetime.strptime(value, '%d-%m-%Y')
@@ -529,122 +431,46 @@ def generate_from_model(model_name):
                                     value = int(value)
                                 elif field['type'] == 'double':
                                     value = float(value)
-                                    value = '{:.2f}'.format(value).replace('.', ',')
                                 
-                                # Atribui o valor mantendo a formatação
+                                # Atribui o valor à célula
                                 sheet[cell] = value
-                                if field['type'] == 'double':
-                                    sheet[cell].number_format = '#.##0,00'
-                                elif field['type'] == 'int':
-                                    sheet[cell].number_format = '#.##0'
-                                elif field['type'] == 'date':
-                                    sheet[cell].number_format = 'dd/mm/yyyy'
                     
-                    # Move os cálculos para depois dos dados se existirem
-                    if calcs_to_move:
-                        new_calc_row = start_row + rows_to_insert
-                        for col, formula in calcs_to_move.items():
-                            new_coord = f"{col}{new_calc_row}"
-                            old_coord = f"{col}{last_calc_row}"
-                            if old_coord in calculation_cells:
-                                calc_info = calculation_cells.pop(old_coord)
-                                calc_info['row'] = new_calc_row
-                                calculation_cells[new_coord] = calc_info
-                            sheet[new_coord] = formula
                     # Atualiza table_positions para a próxima tabela
                     table_positions[table_name] = start_row + rows_to_insert - 1
         
         # Processa os cálculos após inserir todos os dados
-        calculation_results = {}  # Armazena resultados intermediários
-        
-        # Primeiro, processa todos os cálculos simples
         for cell_coord, calc_info in calculation_cells.items():
-            if calc_info['type'] == 'simple':
-                result = None
-                target_table = calc_info['table_name']
-                target_column = None
-                field_type = None
+            # Encontra a tabela correspondente à coluna do cálculo
+            target_table = None
+            for table_name, cols in table_columns.items():
+                if any(col == calc_info['column'] for col in cols.values()):
+                    target_table = table_name
+                    break
+            
+            if target_table:
+                # Coleta os valores da coluna
+                values = []
+                start_row = table_start_rows[target_table]
+                end_row = table_positions.get(target_table, start_row)
                 
-                # Encontra a coluna correta para o campo
-                for table_info in tables[target_table]:
-                    if table_info['field'] == calc_info['field_name']:
-                        target_column = ''.join(filter(str.isalpha, table_info['start_cell']))
-                        field_type = table_info['type']
-                        break
+                for row in range(start_row, end_row + 1):
+                    value_cell = sheet[f"{calc_info['column']}{row}"]
+                    if value_cell.value is not None:
+                        try:
+                            value = float(value_cell.value)
+                            values.append(value)
+                        except (ValueError, TypeError):
+                            pass
                 
-                if target_column:
-                    values = []
-                    start_row = table_start_rows[target_table]
-                    end_row = table_positions.get(target_table, start_row)
+                # Calcula o resultado
+                if values:
+                    if calc_info['operation'] == 'soma':
+                        result = sum(values)
+                    elif calc_info['operation'] == 'media':
+                        result = sum(values) / len(values)
                     
-                    for row in range(start_row, end_row + 1):
-                        value_cell = sheet[f"{target_column}{row}"]
-                        if value_cell.value is not None:
-                            try:
-                                value_str = str(value_cell.value)
-                                if isinstance(value_cell.value, str):
-                                    value = float(value_str.replace(',', '.'))
-                                else:
-                                    value = float(value_str)
-                                values.append(value)
-                            except (ValueError, TypeError):
-                                pass
-                    
-                    if values:
-                        if calc_info['operation'] == 'somar':
-                            result = sum(values)
-                        elif calc_info['operation'] == 'media':
-                            result = sum(values) / len(values)
-                        
-                        # Armazena o resultado para uso em cálculos compostos
-                        calculation_results[cell_coord] = result
-                        
-                        # Formata e exibe o resultado
-                        if field_type == 'int':
-                            result = int(result)
-                        elif field_type == 'double':
-                            result = '{:.2f}'.format(result).replace('.', ',')
-                        
-                        sheet[cell_coord].value = result
-                        if field_type == 'double':
-                            sheet[cell_coord].number_format = '#.##0,00'
-        
-        # Agora processa os cálculos compostos
-        for cell_coord, calc_info in calculation_cells.items():
-            if calc_info['type'] == 'compound':
-                try:
-                    # Encontra os resultados das expressões
-                    def find_result(expr):
-                        # Procura a célula que contém a expressão original
-                        for coord, info in calculation_cells.items():
-                            if info['type'] == 'simple':
-                                expr_str = f"{info['table_name']}.{info['field_name']}.{info['operation']}"
-                                if expr_str == expr:
-                                    return calculation_results.get(coord)
-                        return None
-                    
-                    result1 = find_result(calc_info['expr1'])
-                    result2 = find_result(calc_info['expr2'])
-                    
-                    if result1 is not None and result2 is not None:
-                        if calc_info['operation'] == 'somar':
-                            result = result1 + result2
-                        elif calc_info['operation'] == 'subtrair':
-                            result = result1 - result2
-                        elif calc_info['operation'] == 'multiplicar':
-                            result = result1 * result2
-                        elif calc_info['operation'] == 'dividir':
-                            result = result1 / result2 if result2 != 0 else 0
-                        
-                        # Formata o resultado como número decimal
-                        result_str = '{:.2f}'.format(result).replace('.', ',')
-                        sheet[cell_coord].value = result_str
-                        sheet[cell_coord].number_format = '#.##0,00'
-                    else:
-                        print(f"Não foi possível encontrar os resultados para: {calc_info['expr1']} ou {calc_info['expr2']}")
-                except Exception as e:
-                    print(f"Erro no cálculo composto: {str(e)}")
-                    sheet[cell_coord].value = "ERRO"
+                    # Substitui o marcador pelo valor calculado
+                    sheet[cell_coord] = round(result, 2)
         
         # Gera nomes únicos para os arquivos
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
